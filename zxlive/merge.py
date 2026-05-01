@@ -9,7 +9,7 @@ from __future__ import annotations
 import copy
 from typing import Optional
 
-from pyzx import EdgeType
+from pyzx import EdgeType, VertexType
 
 from .common import ET, VT, GraphT
 
@@ -151,7 +151,39 @@ def merge_subdiagram(
                     new_g.remove_edge(e)
                     break
 
-    # Phase 5: Node-on-edge snaps for non-merged selected vertices
+    # Phase 5: Eliminate boundary+boundary merges.
+    # When a selected boundary merged onto an unselected boundary, the
+    # target is now a degree-2 boundary.  Remove it and wire its two
+    # neighbors together directly.
+    # We check the *original* graph for the selected vertex's type since
+    # v has already been removed from new_g.
+    boundary_targets = set()
+    for v, t in merge_map.items():
+        if g.type(v) == VertexType.BOUNDARY and g.type(t) == VertexType.BOUNDARY:
+            boundary_targets.add(t)
+    for t in boundary_targets:
+        if t not in new_g.vertices():
+            continue
+        incident = list(new_g.incident_edges(t))
+        if len(incident) != 2:
+            continue
+        s0, t0 = new_g.edge_st(incident[0])
+        n0 = t0 if s0 == t else s0
+        s1, t1 = new_g.edge_st(incident[1])
+        n1 = t1 if s1 == t else s1
+        ety0 = new_g.edge_type(incident[0])
+        ety1 = new_g.edge_type(incident[1])
+        # Combine edge types: two Hadamards cancel to simple
+        if ety0 == EdgeType.HADAMARD and ety1 == EdgeType.HADAMARD:
+            combined_ety = EdgeType.SIMPLE
+        elif ety0 == EdgeType.HADAMARD or ety1 == EdgeType.HADAMARD:
+            combined_ety = EdgeType.HADAMARD
+        else:
+            combined_ety = EdgeType.SIMPLE
+        new_g.remove_vertex(t)
+        new_g.add_edge((n0, n1), combined_ety)
+
+    # Phase 6: Node-on-edge snaps for non-merged selected vertices
     remaining_set = set(v for v in selected if v not in merge_map and v in new_g.vertices())
     for v in remaining_set:
         vx, vy = new_g.row(v), new_g.qubit(v)

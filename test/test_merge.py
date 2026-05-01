@@ -256,6 +256,78 @@ class TestMergeNodeOnEdge:
         assert not result.connected(v, t)
 
 
+class TestMergeBoundaryBoundary:
+    def test_boundary_pair_eliminated(self) -> None:
+        """Two boundaries at the same position should both be removed,
+        with their neighbors wired together."""
+        g = new_graph()
+        # Diagram 1: z1 -- boundary1
+        z1 = g.add_vertex(VertexType.Z, qubit=0, row=0)
+        b1 = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=1)
+        g.add_edge((z1, b1), EdgeType.SIMPLE)
+
+        # Diagram 2: boundary2 -- z2
+        b2 = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=1)
+        z2 = g.add_vertex(VertexType.Z, qubit=0, row=2)
+        g.add_edge((b2, z2), EdgeType.SIMPLE)
+
+        result = merge_subdiagram(g, [b2, z2])
+        # Both boundaries gone
+        assert b1 not in result.vertices()
+        assert b2 not in result.vertices()
+        # z1 and z2 now directly connected
+        assert result.connected(z1, z2)
+
+    def test_boundary_pair_hadamard_legs(self) -> None:
+        """Hadamard + simple legs combine to Hadamard."""
+        g = new_graph()
+        z1 = g.add_vertex(VertexType.Z, qubit=0, row=0)
+        b1 = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=1)
+        g.add_edge((z1, b1), EdgeType.HADAMARD)
+
+        b2 = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=1)
+        z2 = g.add_vertex(VertexType.Z, qubit=0, row=2)
+        g.add_edge((b2, z2), EdgeType.SIMPLE)
+
+        result = merge_subdiagram(g, [b2, z2])
+        edges = list(result.edges(z1, z2))
+        assert len(edges) == 1
+        assert result.edge_type(edges[0]) == EdgeType.HADAMARD
+
+    def test_boundary_pair_double_hadamard_cancels(self) -> None:
+        """Two Hadamard legs cancel to a simple edge."""
+        g = new_graph()
+        z1 = g.add_vertex(VertexType.Z, qubit=0, row=0)
+        b1 = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=1)
+        g.add_edge((z1, b1), EdgeType.HADAMARD)
+
+        b2 = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=1)
+        z2 = g.add_vertex(VertexType.Z, qubit=0, row=2)
+        g.add_edge((b2, z2), EdgeType.HADAMARD)
+
+        result = merge_subdiagram(g, [b2, z2])
+        edges = list(result.edges(z1, z2))
+        assert len(edges) == 1
+        assert result.edge_type(edges[0]) == EdgeType.SIMPLE
+
+    def test_non_boundary_merge_not_eliminated(self) -> None:
+        """Merging a Z onto a boundary (or vice versa) should NOT trigger
+        boundary elimination — only boundary+boundary does."""
+        g = new_graph()
+        z1 = g.add_vertex(VertexType.Z, qubit=0, row=0)
+        b1 = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=1)
+        g.add_edge((z1, b1), EdgeType.SIMPLE)
+
+        # Top: a Z spider at the same position as b1
+        z_top = g.add_vertex(VertexType.Z, qubit=0, row=1)
+        z2 = g.add_vertex(VertexType.Z, qubit=0, row=2)
+        g.add_edge((z_top, z2), EdgeType.SIMPLE)
+
+        result = merge_subdiagram(g, [z_top, z2])
+        # b1 should still exist (now typed Z from merge), not eliminated
+        assert b1 in result.vertices()
+
+
 class TestMergeMixed:
     def test_some_merge_some_snap(self) -> None:
         """One selected vertex merges onto a node, another snaps onto an edge."""
