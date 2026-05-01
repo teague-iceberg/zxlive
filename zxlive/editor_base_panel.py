@@ -22,8 +22,9 @@ from .base_panel import BasePanel, ToolbarSection
 from .commands import (BaseCommand, AddEdge, AddEdges, AddNode, AddNodeSnapped, AddWNode, ChangeEdgeColor, ChangeEdgeCurve,
                        ChangeNodeType, ChangePhase, MergeNodes, MoveNode, SetGraph,
                        UpdateGraph)
-from .common import (VT, GraphT, ToolType, get_data,
+from .common import (VT, ET, GraphT, ToolType, get_data,
                      pos_from_view, get_settings_value)
+from .merge import merge_subdiagram as _merge_subdiagram
 from .dialogs import import_diagram_from_file, show_error_msg, update_dummy_vertex_text
 from .eitem import EItem, HAD_EDGE_BLUE
 from .vitem import VItem, BLACK
@@ -223,6 +224,21 @@ class EditorBasePanel(BasePanel):
         if len(selected) < 2:
             return
         cmd = MergeNodes(self.graph_view, selected)
+        self.undo_stack.push(cmd)
+
+    def merge_subdiagram(self) -> None:
+        """Merge selected subdiagram onto the graph beneath it."""
+        selected = list(self.graph_scene.selected_vertices)
+        if not selected:
+            return
+
+        # Extract curve distances from scene EItems (View -> Model boundary)
+        edge_curves: dict[ET, list[float]] = {}
+        for e, eitems in self.graph_scene.edge_map.items():
+            edge_curves[e] = [eitems[idx].curve_distance for idx in sorted(eitems)]
+
+        new_g = _merge_subdiagram(self.graph_scene.g, selected, edge_curves)
+        cmd = UpdateGraph(self.graph_view, new_g)
         self.undo_stack.push(cmd)
 
     def add_vert(self, x: float, y: float, edges: list[EItem]) -> None:

@@ -74,6 +74,7 @@ class GraphView(QGraphicsView):
 
     wand_trace_finished = Signal(object)
     merge_triggered = Signal()
+    merge_subdiagram_triggered = Signal()
     draw_background_lines = True
 
     def __init__(self, graph_scene: GraphScene) -> None:
@@ -159,8 +160,12 @@ class GraphView(QGraphicsView):
             else:
                 distance = 0.5
             if e.key() == Qt.Key.Key_M:
-                # Merge vertices at the same position
-                self.merge_triggered.emit()
+                if Qt.KeyboardModifier.ShiftModifier & e.modifiers():
+                    # Merge selected subdiagram onto graph beneath
+                    self.merge_subdiagram_triggered.emit()
+                else:
+                    # Merge vertices at the same position
+                    self.merge_triggered.emit()
                 return
             for v in self.graph_scene.selected_vertices:
                 vitem = self.graph_scene.vertex_map[v]

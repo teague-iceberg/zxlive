@@ -52,6 +52,7 @@ class RulePanel(EditorBasePanel):
         self.graph_scene_left.edge_added.connect(self.add_edge)
         self.graph_scene_left.edge_dragged.connect(self.change_edge_curves)
         self.graph_view_left.merge_triggered.connect(self.merge_vertices)
+        self.graph_view_left.merge_subdiagram_triggered.connect(self.merge_subdiagram)
 
         self.graph_scene_right.vertices_moved.connect(self.vert_moved)
         self.graph_scene_right.vertex_dropped_onto.connect(self._vertex_dropped_onto)
@@ -60,6 +61,7 @@ class RulePanel(EditorBasePanel):
         self.graph_scene_right.edge_added.connect(self.add_edge)
         self.graph_scene_right.edge_dragged.connect(self.change_edge_curves)
         self.graph_view_right.merge_triggered.connect(self.merge_vertices)
+        self.graph_view_right.merge_subdiagram_triggered.connect(self.merge_subdiagram)
 
         self.create_side_bar()
         self.splitter.addWidget(self.sidebar)
