@@ -151,15 +151,15 @@ def merge_subdiagram(
                     new_g.remove_edge(e)
                     break
 
-    # Phase 5: Eliminate boundary+boundary merges.
-    # When a selected boundary merged onto an unselected boundary, the
-    # target is now a degree-2 boundary.  Remove it and wire its two
-    # neighbors together directly.
-    # We check the *original* graph for the selected vertex's type since
-    # v has already been removed from new_g.
+    # Phase 5: Eliminate degree-1 boundary + degree-1 boundary merges.
+    # When two well-formed (degree 1) boundary nodes merge, the target
+    # becomes a degree-2 pass-through.  Remove it and wire its two
+    # neighbors together directly.  Other boundary degree combinations
+    # are left as normal merges.
     boundary_targets = set()
     for v, t in merge_map.items():
-        if g.type(v) == VertexType.BOUNDARY and g.type(t) == VertexType.BOUNDARY:
+        if (g.type(v) == VertexType.BOUNDARY and g.vertex_degree(v) == 1
+                and g.type(t) == VertexType.BOUNDARY and g.vertex_degree(t) == 1):
             boundary_targets.add(t)
     for t in boundary_targets:
         if t not in new_g.vertices():

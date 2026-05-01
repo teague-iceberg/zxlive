@@ -310,6 +310,32 @@ class TestMergeBoundaryBoundary:
         assert len(edges) == 1
         assert result.edge_type(edges[0]) == EdgeType.SIMPLE
 
+    def test_isolated_boundary_pair_normal_merge(self) -> None:
+        """Two isolated (degree 0) boundaries: normal merge, target survives."""
+        g = new_graph()
+        b1 = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=0)
+        b2 = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=0)
+
+        result = merge_subdiagram(g, [b2])
+        assert b1 in result.vertices()
+        assert b2 not in result.vertices()
+
+    def test_degree2_onto_degree0_normal_merge(self) -> None:
+        """Degree-2 boundary onto degree-0 boundary: normal merge, not eliminated."""
+        g = new_graph()
+        b_bottom = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=1)
+
+        z1 = g.add_vertex(VertexType.Z, qubit=0, row=0)
+        b_top = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=1)
+        z2 = g.add_vertex(VertexType.Z, qubit=0, row=2)
+        g.add_edge((z1, b_top), EdgeType.SIMPLE)
+        g.add_edge((b_top, z2), EdgeType.SIMPLE)
+
+        result = merge_subdiagram(g, [b_top, z1, z2])
+        # b_bottom survives as a degree-2 node (not eliminated)
+        assert b_bottom in result.vertices()
+        assert result.connected(z1, b_bottom) or result.connected(b_bottom, z2)
+
     def test_non_boundary_merge_not_eliminated(self) -> None:
         """Merging a Z onto a boundary (or vice versa) should NOT trigger
         boundary elimination — only boundary+boundary does."""
