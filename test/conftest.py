@@ -20,7 +20,8 @@ from PySide6.QtCore import QSettings
 def _probe_default_path(fmt: QSettings.Format) -> str:
     """Probe Qt's default UserScope base path for ``fmt`` via a throwaway QSettings.
 
-    Accepts the ``<base>/<org>/<app>.ext`` and ``<base>/<app>.ext`` layouts;
+    Accepts the ``<base>/<org>/<app>.ext`` and ``<base>/<app>.ext`` layouts,
+    and also the macOS NativeFormat ``<base>/com.<org>.<app>.plist`` layout;
     raises on anything else rather than silently restoring a wrong path.
     """
     probe_org = "zxlive-conftest-probe-org"
@@ -31,6 +32,10 @@ def _probe_default_path(fmt: QSettings.Format) -> str:
     if probe_path.stem == probe_app:
         if probe_path.parent.name == probe_org:
             return str(probe_path.parent.parent)
+        return str(probe_path.parent)
+
+    # macOS NativeFormat: com.<org>.<app>.plist in a flat directory
+    if probe_path.suffix == ".plist" and probe_org in probe_path.stem:
         return str(probe_path.parent)
 
     raise RuntimeError(
