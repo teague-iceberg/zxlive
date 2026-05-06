@@ -8,46 +8,38 @@ from PySide6.QtCore import Qt, QRectF, QMarginsF
 from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsRectItem, QStyleOptionGraphicsItem, QWidget
 
+from pyzx.circuitlike import Subgraph, CliffordUnitary, PauliBox
+
 from .common import SCALE
-from .subgraph import Subgraph
-
-# Colors for different subgraph types
-SUBGRAPH_COLORS: dict[Optional[str], QColor] = {
-    "clifford": QColor(70, 130, 230, 40),     # blue
-    "pauli_box": QColor(230, 130, 70, 40),     # orange
-    None: QColor(150, 150, 150, 40),           # gray for untyped
-}
-
-SUBGRAPH_BORDER_COLORS: dict[Optional[str], QColor] = {
-    "clifford": QColor(70, 130, 230, 160),
-    "pauli_box": QColor(230, 130, 70, 160),
-    None: QColor(150, 150, 150, 160),
-}
-
-SUBGRAPH_LABELS: dict[Optional[str], str] = {
-    "clifford": "Clifford",
-    "pauli_box": "Pauli",
-    None: "Subgraph",
-}
 
 PADDING = 0.3 * SCALE  # padding around vertices
 BOX_Z = -2  # behind edges and vertices
+
+
+def _sg_color(sg: Subgraph) -> tuple[QColor, QColor, str]:
+    """Return (fill, border, label) for a subgraph based on its type."""
+    if isinstance(sg, CliffordUnitary):
+        return (QColor(70, 130, 230, 40),
+                QColor(70, 130, 230, 160),
+                "Clifford")
+    if isinstance(sg, PauliBox):
+        label = f"Pauli: {sg.pauli_string}" if sg.pauli_string else "Pauli"
+        return (QColor(230, 130, 70, 40),
+                QColor(230, 130, 70, 160),
+                label)
+    return (QColor(150, 150, 150, 40),
+            QColor(150, 150, 150, 160),
+            "Subgraph")
 
 
 class SubgraphBoxItem(QGraphicsRectItem):
     """Draws a colored bounding box around a subgraph's vertices."""
 
     def __init__(self, subgraph: Subgraph, vertex_positions: dict) -> None:
-        """
-        Args:
-            subgraph: The Subgraph to visualize.
-            vertex_positions: Map from VT -> QPointF (scene positions).
-        """
         super().__init__()
         self.subgraph = subgraph
         self.setZValue(BOX_Z)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
-        self._selected = False
         self._update_rect(vertex_positions)
 
     def _update_rect(self, vertex_positions: dict) -> None:
@@ -74,12 +66,9 @@ class SubgraphBoxItem(QGraphicsRectItem):
 
     def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem,
               widget: Optional[QWidget] = None) -> None:
-        sg_type = self.subgraph.subgraph_type
-        fill = SUBGRAPH_COLORS.get(sg_type, SUBGRAPH_COLORS[None])
-        border = SUBGRAPH_BORDER_COLORS.get(sg_type, SUBGRAPH_BORDER_COLORS[None])
+        fill, border, label = _sg_color(self.subgraph)
 
         if self.isSelected():
-            # Brighter, solid border when selected
             border = QColor(border.red(), border.green(), border.blue(), 255)
             fill = QColor(fill.red(), fill.green(), fill.blue(), 80)
 
@@ -89,12 +78,6 @@ class SubgraphBoxItem(QGraphicsRectItem):
         painter.setPen(pen)
         painter.setBrush(QBrush(fill))
         painter.drawRoundedRect(self.rect(), 8.0, 8.0)
-
-        # Draw label
-        label = SUBGRAPH_LABELS.get(sg_type, "Subgraph")
-        params = self.subgraph.params
-        if "pauli_string" in params:
-            label += f": {params['pauli_string']}"
 
         font = QFont()
         font.setPointSize(10)

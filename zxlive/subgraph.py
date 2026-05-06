@@ -1,33 +1,18 @@
-"""Subgraph management for typed subdiagram annotations in zxlive.
+"""Subgraph management for zxlive.
 
-A Subgraph groups vertices in the graph into named, typed regions
-(e.g., "Clifford unitary", "Pauli box") and stores their CircuitLike
-metadata.  The SubgraphManager keeps track of all subgraphs for a
-given graph scene.
+The SubgraphManager tracks subgraph annotations on the graph scene,
+assigning IDs and enforcing one-subgraph-per-vertex.  The subgraph
+data model lives in pyzx (Subgraph, CircuitLike, etc.).
 """
 
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
 from typing import Optional
 
-from pyzx.circuitlike import CircuitLike
+from pyzx.circuitlike import Subgraph, CircuitLike
 
-from .common import VT, ET, GraphT
-
-
-@dataclass
-class Subgraph:
-    """A named, typed subdiagram annotation."""
-    id: str
-    subgraph_type: Optional[str]  # "clifford", "pauli_box", or None
-    circuit_like: CircuitLike
-    params: dict = field(default_factory=dict)  # e.g. {"pauli_string": "XZ"}
-
-    @property
-    def vertices(self) -> set[VT]:
-        return self.circuit_like.vertices
+from .common import VT
 
 
 class SubgraphManager:
@@ -41,30 +26,22 @@ class SubgraphManager:
         self._subgraphs: dict[str, Subgraph] = {}
         self._vertex_to_subgraph: dict[VT, str] = {}
 
-    def create(
-        self,
-        circuit_like: CircuitLike,
-        subgraph_type: Optional[str] = None,
-        params: Optional[dict] = None,
-    ) -> Subgraph:
-        """Create a new subgraph.  Raises if any vertex is already in a subgraph."""
-        for v in circuit_like.vertices:
+    def add(self, subgraph: Subgraph) -> str:
+        """Register a subgraph.  Returns its assigned ID.
+
+        Raises ValueError if any vertex is already in a subgraph.
+        """
+        for v in subgraph.vertices:
             if v in self._vertex_to_subgraph:
                 existing = self._vertex_to_subgraph[v]
                 raise ValueError(
                     f"Vertex {v} already belongs to subgraph {existing}")
 
         sg_id = str(uuid.uuid4())[:8]
-        sg = Subgraph(
-            id=sg_id,
-            subgraph_type=subgraph_type,
-            circuit_like=circuit_like,
-            params=params or {},
-        )
-        self._subgraphs[sg_id] = sg
-        for v in circuit_like.vertices:
+        self._subgraphs[sg_id] = subgraph
+        for v in subgraph.vertices:
             self._vertex_to_subgraph[v] = sg_id
-        return sg
+        return sg_id
 
     def delete(self, sg_id: str) -> None:
         """Remove a subgraph."""
@@ -83,9 +60,38 @@ class SubgraphManager:
             return None
         return self._subgraphs.get(sg_id)
 
-    def all_subgraphs(self) -> list[Subgraph]:
-        return list(self._subgraphs.values())
+    def get_id(self, subgraph: Subgraph) -> Optional[str]:
+        """Find the ID for a given subgraph instance."""
+        for sg_id, sg in self._subgraphs.items():
+            if sg is subgraph:
+                return sg_id
+        return None
+
+    def all_subgraphs(self) -> list[tuple[str, Subgraph]]:
+        """Return all (id, subgraph) pairs."""
+        return list(self._subgraphs.items())
 
     def clear(self) -> None:
         self._subgraphs.clear()
         self._vertex_to_subgraph.clear()
+
+    def merge(self, sg_id_a: str, sg_id_b: str) -> str:
+        """Merge two subgraphs into one (vertex set union).
+
+        CircuitLike structure is not preserved — the result is a
+        plain Subgraph.  Returns the new subgraph's ID.
+        Raises ValueError if vertex sets overlap or IDs not found.
+        """
+        a = self._subgraphs.get(sg_id_a)
+        b = self._subgraphs.get(sg_id_b)
+        if a is None or b is None:
+            raise ValueError("Subgraph not found")
+
+        overlap = a.vertices & b.vertices
+        if overlap:
+            raise ValueError(f"Vertex sets overlap: {overlap}")
+
+        merged = Subgraph(vertices=a.vertices | b.vertices, g=a.g)
+        self.delete(sg_id_a)
+        self.delete(sg_id_b)
+        return self.add(merged)
