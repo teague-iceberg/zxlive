@@ -25,6 +25,7 @@ from .commands import (BaseCommand, AddEdge, AddEdges, AddNode, AddNodeSnapped, 
 from .common import (VT, ET, GraphT, ToolType, get_data,
                      pos_from_view, get_settings_value)
 from .merge import merge_subdiagram as _merge_subdiagram
+from .subgraph import Subgraph
 from .dialogs import import_diagram_from_file, show_error_msg, update_dummy_vertex_text
 from .eitem import EItem, HAD_EDGE_BLUE
 from .vitem import VItem, BLACK
@@ -118,6 +119,29 @@ class EditorBasePanel(BasePanel):
             self.patterns_list = PatternsListWidget(self, self.patterns_folder)
             patterns_layout.addWidget(self.patterns_list)
             self.sidebar.addWidget(patterns_container)
+
+        # Insert subdiagrams section
+        insert_container, insert_layout = create_titled_widget("Insert Subdiagram")
+        btn_h = QPushButton("H (Hadamard)")
+        btn_h.clicked.connect(self.insert_clifford_h)
+        insert_layout.addWidget(btn_h)
+        btn_s = QPushButton("S gate")
+        btn_s.clicked.connect(self.insert_clifford_s)
+        insert_layout.addWidget(btn_s)
+        btn_cnot = QPushButton("CNOT")
+        btn_cnot.clicked.connect(self.insert_clifford_cnot)
+        insert_layout.addWidget(btn_cnot)
+        btn_pauli = QPushButton("Pauli Box...")
+        btn_pauli.clicked.connect(self.insert_pauli_box)
+        insert_layout.addWidget(btn_pauli)
+        self.sidebar.addWidget(insert_container)
+
+        # Rewrite rules section
+        rewrite_container, rewrite_layout = create_titled_widget("Subdiagram Rewrites")
+        btn_push = QPushButton("Push Clifford through Pauli Box")
+        btn_push.clicked.connect(self.apply_push_clifford)
+        rewrite_layout.addWidget(btn_push)
+        self.sidebar.addWidget(rewrite_container)
 
         self.variable_viewer = VariableViewer(self)
         self.sidebar.addWidget(self.variable_viewer)
@@ -237,9 +261,292 @@ class EditorBasePanel(BasePanel):
         for e, eitems in self.graph_scene.edge_map.items():
             edge_curves[e] = [eitems[idx].curve_distance for idx in sorted(eitems)]
 
-        new_g = _merge_subdiagram(self.graph_scene.g, selected, edge_curves)
+        new_g, edge_remap = _merge_subdiagram(self.graph_scene.g, selected, edge_curves)
         cmd = UpdateGraph(self.graph_view, new_g)
         self.undo_stack.push(cmd)
+
+        # Update CircuitLike metadata in all subgraphs to reflect remapped edges
+        if edge_remap:
+            self._remap_subgraph_edges(edge_remap, new_g)
+
+    def apply_push_clifford(self) -> None:
+        """Push a selected Clifford through a selected Pauli box."""
+        from pyzx.rewrite_rules.push_clifford_rule import check_push_clifford, apply_push_clifford
+
+        selected_sgs = self.graph_scene.selected_subgraphs
+        cliffords = [sg for sg in selected_sgs if sg.subgraph_type == "clifford"]
+        pauli_boxes = [sg for sg in selected_sgs if sg.subgraph_type == "pauli_box"]
+
+        if len(cliffords) != 1 or len(pauli_boxes) != 1:
+            show_error_msg("Select subgraphs",
+                           "Select exactly one Clifford gate and one Pauli box "
+                           "(click their bounding boxes).",
+                           parent=self)
+            return
+
+        cliff_sg = cliffords[0]
+        pauli_sg = pauli_boxes[0]
+        g = self.graph_scene.g
+
+        # Debug info
+        cl_c = cliff_sg.circuit_like
+        cl_p = pauli_sg.circuit_like
+        print(f"[push] Clifford vertices: {cl_c.vertices}")
+        print(f"[push] Clifford outputs: {cl_c.output_qubit_map()}")
+        print(f"[push] Pauli vertices: {cl_p.vertices}")
+        print(f"[push] Pauli inputs: {cl_p.input_qubit_map()}")
+        print(f"[push] Graph edges: {list(g.edges())}")
+
+        match = check_push_clifford(g, cl_c, cl_p)
+        if match is None:
+            show_error_msg("Cannot push",
+                           "The selected Clifford and Pauli box are not "
+                           "same-support adjacent.",
+                           parent=self)
+            return
+
+        # Apply the rewrite on a deep copy
+        new_g = copy.deepcopy(g)
+        match_copy = check_push_clifford(new_g, cl_c, cl_p)
+        if match_copy is None:
+            show_error_msg("Cannot push", "Rewrite check failed on copy.", parent=self)
+            return
+        result = apply_push_clifford(new_g, match_copy)
+
+        # Clear old subgraph markings (stale after rewrite)
+        self.graph_scene.subgraph_manager.delete(cliff_sg.id)
+        self.graph_scene.remove_subgraph_box(cliff_sg.id)
+        self.graph_scene.subgraph_manager.delete(pauli_sg.id)
+        self.graph_scene.remove_subgraph_box(pauli_sg.id)
+
+        cmd = UpdateGraph(self.graph_view, new_g)
+        self.undo_stack.push(cmd)
+
+        # Re-create subgraph markings for the new Pauli box and Clifford
+        from pyzx.circuitlike import CircuitLike
+
+        if result.new_pauli_vertices:
+            pauli_cl = CircuitLike(vertices=result.new_pauli_vertices)
+            try:
+                sg = self.graph_scene.subgraph_manager.create(
+                    pauli_cl, subgraph_type="pauli_box",
+                    params={"pauli_string": result.new_pauli_string})
+                self.graph_scene.add_subgraph_box(sg.id)
+            except ValueError:
+                pass
+
+        if result.new_clifford_vertices:
+            cliff_cl = CircuitLike(vertices=result.new_clifford_vertices)
+            try:
+                sg = self.graph_scene.subgraph_manager.create(
+                    cliff_cl, subgraph_type="clifford",
+                    params={"gate_name": match.clifford_name})
+                self.graph_scene.add_subgraph_box(sg.id)
+            except ValueError:
+                pass
+
+    def insert_pauli_box(self) -> None:
+        """Prompt for a Pauli string and insert a tagged Pauli box."""
+        from pyzx.paulibox import generate_pauli_box
+
+        try:
+            text, ok = QInputDialog.getText(
+                self, "Insert Pauli Box",
+                "Enter Pauli string (e.g. XZIY):")
+            if not ok or not text:
+                return
+            text = text.upper().strip()
+            if not all(c in "XYZI" for c in text) or len(text) == 0:
+                show_error_msg("Invalid Pauli string",
+                               "Use only X, Y, Z, I characters.",
+                               parent=self)
+                return
+
+            g, cl = generate_pauli_box(text)
+            self._insert_tagged_graph(g, cl, "pauli_box", {"pauli_string": text})
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            show_error_msg("Error inserting Pauli box", str(e), parent=self)
+
+    def insert_clifford_h(self) -> None:
+        """Insert a tagged Hadamard gate."""
+        self._insert_clifford_gate("H")
+
+    def insert_clifford_s(self) -> None:
+        """Insert a tagged S gate."""
+        self._insert_clifford_gate("S")
+
+    def insert_clifford_cnot(self) -> None:
+        """Insert a tagged CNOT gate."""
+        self._insert_clifford_gate("CNOT")
+
+    def _insert_clifford_gate(self, gate_name: str) -> None:
+        """Generate and insert a tagged Clifford gate."""
+        from pyzx.circuitlike import CircuitLike
+        from pyzx.graph.multigraph import Multigraph
+
+        g = Multigraph()
+        g.set_auto_simplify(False)
+
+        if gate_name == "H":
+            from pyzx.utils import set_h_box_label
+            b_in = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=0)
+            h = g.add_vertex(VertexType.H_BOX, qubit=0, row=1)
+            set_h_box_label(g, h, -1)
+            b_out = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=2)
+            g.add_edge((b_in, h), EdgeType.SIMPLE)
+            g.add_edge((h, b_out), EdgeType.SIMPLE)
+            e_in = next(g.edges(b_in, h))
+            e_out = next(g.edges(h, b_out))
+            cl = CircuitLike(
+                vertices={h},
+                input_edges={e_in},
+                output_edges={e_out},
+                edge_labels={e_in: 0, e_out: 0},
+            )
+        elif gate_name == "S":
+            from fractions import Fraction
+            b_in = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=0)
+            s = g.add_vertex(VertexType.Z, qubit=0, row=1, phase=Fraction(1, 2))
+            b_out = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=2)
+            g.add_edge((b_in, s), EdgeType.SIMPLE)
+            g.add_edge((s, b_out), EdgeType.SIMPLE)
+            e_in = next(g.edges(b_in, s))
+            e_out = next(g.edges(s, b_out))
+            cl = CircuitLike(
+                vertices={s},
+                input_edges={e_in},
+                output_edges={e_out},
+                edge_labels={e_in: 0, e_out: 0},
+            )
+        elif gate_name == "CNOT":
+            b_in0 = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=0)
+            b_in1 = g.add_vertex(VertexType.BOUNDARY, qubit=1, row=0)
+            z = g.add_vertex(VertexType.Z, qubit=0, row=1, phase=0)
+            x = g.add_vertex(VertexType.X, qubit=1, row=1, phase=0)
+            b_out0 = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=2)
+            b_out1 = g.add_vertex(VertexType.BOUNDARY, qubit=1, row=2)
+            g.add_edge((b_in0, z), EdgeType.SIMPLE)
+            g.add_edge((b_in1, x), EdgeType.SIMPLE)
+            g.add_edge((z, x), EdgeType.SIMPLE)
+            g.add_edge((z, b_out0), EdgeType.SIMPLE)
+            g.add_edge((x, b_out1), EdgeType.SIMPLE)
+            e_in0 = next(g.edges(b_in0, z))
+            e_in1 = next(g.edges(b_in1, x))
+            e_out0 = next(g.edges(z, b_out0))
+            e_out1 = next(g.edges(x, b_out1))
+            cl = CircuitLike(
+                vertices={z, x},
+                input_edges={e_in0, e_in1},
+                output_edges={e_out0, e_out1},
+                edge_labels={e_in0: 0, e_out0: 0, e_in1: 1, e_out1: 1},
+            )
+        else:
+            return
+
+        self._insert_tagged_graph(g, cl, "clifford", {"gate_name": gate_name})
+
+    def _insert_tagged_graph(
+        self,
+        subgraph: GraphT,
+        cl: CircuitLike,
+        subgraph_type: str,
+        params: dict,
+    ) -> None:
+        """Insert a graph into the scene and tag its vertices as a subgraph."""
+        from pyzx.circuitlike import CircuitLike
+
+        new_g = copy.deepcopy(self.graph_scene.g)
+        # Place the subgraph below existing vertices to avoid overlap
+        if new_g.num_vertices() > 0:
+            max_qubit = max((new_g.qubit(v) for v in new_g.vertices()), default=0)
+            offset_qubit = max_qubit + 2
+        else:
+            offset_qubit = 0
+        new_verts, new_edges = new_g.merge(subgraph.translate(0.5, offset_qubit + 0.5))
+
+        cmd = UpdateGraph(self.graph_view, new_g)
+        self.undo_stack.push(cmd)
+        self.graph_scene.select_vertices(new_verts)
+
+        # Build a new CircuitLike using the remapped vertex IDs
+        # The merge returns new_verts in the same order as the original vertices
+        old_to_new = dict(zip(sorted(subgraph.vertices()), sorted(new_verts)))
+        new_cl_vertices = {old_to_new[v] for v in cl.vertices if v in old_to_new}
+
+        # Remap edges — find edges in new graph between remapped vertices
+        def _remap_edge(old_e: ET) -> Optional[ET]:
+            s, t = subgraph.edge_st(old_e)
+            ns = old_to_new.get(s)
+            nt = old_to_new.get(t)
+            if ns is None or nt is None:
+                return None
+            ety = subgraph.edge_type(old_e)
+            for e in new_g.edges(ns, nt):
+                if new_g.edge_type(e) == ety:
+                    return e
+            return None
+
+        new_input_edges = set()
+        for e in cl.input_edges:
+            ne = _remap_edge(e)
+            if ne is not None:
+                new_input_edges.add(ne)
+
+        new_output_edges = set()
+        for e in cl.output_edges:
+            ne = _remap_edge(e)
+            if ne is not None:
+                new_output_edges.add(ne)
+
+        new_edge_labels = {}
+        for e, q in cl.edge_labels.items():
+            ne = _remap_edge(e)
+            if ne is not None:
+                new_edge_labels[ne] = q
+
+        new_cl = CircuitLike(
+            vertices=new_cl_vertices,
+            input_edges=new_input_edges,
+            output_edges=new_output_edges,
+            edge_labels=new_edge_labels,
+        )
+
+        sg = self.graph_scene.subgraph_manager.create(
+            new_cl, subgraph_type=subgraph_type, params=params)
+        self.graph_scene.add_subgraph_box(sg.id)
+
+    def _remap_subgraph_edges(self, edge_remap: dict[ET, ET], new_g: GraphT) -> None:
+        """Update CircuitLike edge references in all subgraphs after a merge."""
+        from pyzx.circuitlike import CircuitLike
+
+        for sg in self.graph_scene.subgraph_manager.all_subgraphs():
+            cl = sg.circuit_like
+
+            # Remap input edges
+            new_inputs: set[ET] = set()
+            for e in cl.input_edges:
+                new_inputs.add(edge_remap.get(e, e))
+            cl.input_edges = new_inputs
+
+            # Remap output edges
+            new_outputs: set[ET] = set()
+            for e in cl.output_edges:
+                new_outputs.add(edge_remap.get(e, e))
+            cl.output_edges = new_outputs
+
+            # Remap edge labels
+            new_labels: dict[ET, int] = {}
+            for e, q in cl.edge_labels.items():
+                new_labels[edge_remap.get(e, e)] = q
+            cl.edge_labels = new_labels
+
+            # Remove vertices that no longer exist in the graph
+            cl.vertices = {v for v in cl.vertices if v in new_g.vertices()}
+
+        # Refresh bounding boxes
+        self.graph_scene.refresh_subgraph_boxes()
 
     def add_vert(self, x: float, y: float, edges: list[EItem]) -> None:
         """Add a vertex at point (x,y). `edges` is a list of EItems that are underneath the current position.
@@ -323,6 +630,7 @@ class EditorBasePanel(BasePanel):
 
     def vert_moved(self, vs: list[tuple[VT, float, float]]) -> None:
         self.undo_stack.push(MoveNode(self.graph_view, vs))
+        self.graph_scene.refresh_subgraph_boxes()
 
     def _vertex_dropped_onto(self, v: VT, w: VT) -> None:
         view_pos = self.graph_scene.vertex_map[v].pos()

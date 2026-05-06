@@ -61,12 +61,16 @@ def merge_subdiagram(
         A new graph with the merge applied.
     """
     if not selected:
-        return copy.deepcopy(g)
+        return copy.deepcopy(g), {}
 
     new_g = copy.deepcopy(g)
     selected_set = set(selected)
     if edge_curves is None:
         edge_curves = {}
+
+    # Track how edges get remapped during the merge (old_edge → new_edge).
+    # Used by callers to update CircuitLike metadata.
+    edge_remap: dict[ET, ET] = {}
 
     # Build position -> unselected vertex lookup
     pos_to_unselected: dict[tuple[float, float], VT] = {}
@@ -138,6 +142,9 @@ def merge_subdiagram(
 
             ety = new_g.edge_type(e)
             new_g.add_edge((t, resolved_other), ety)
+            # Track the remap: old edge e -> new edge (t, resolved_other)
+            new_edge = next(new_g.edges(t, resolved_other))
+            edge_remap[e] = new_edge
 
         # Remove v (also removes all remaining incident edges on v)
         new_g.remove_vertex(v)
@@ -182,6 +189,15 @@ def merge_subdiagram(
             combined_ety = EdgeType.SIMPLE
         new_g.remove_vertex(t)
         new_g.add_edge((n0, n1), combined_ety)
+        # Record the edge remapping: both old incident edges map to the new one
+        new_edge = next(new_g.edges(n0, n1))
+        edge_remap[incident[0]] = new_edge
+        edge_remap[incident[1]] = new_edge
+        # Chain: any earlier remap that pointed to incident[0] or [1]
+        # should now point to new_edge
+        for old_e, mapped_e in list(edge_remap.items()):
+            if mapped_e == incident[0] or mapped_e == incident[1]:
+                edge_remap[old_e] = new_edge
 
     # Phase 6: Node-on-edge snaps for non-merged selected vertices
     remaining_set = set(v for v in selected if v not in merge_map and v in new_g.vertices())
@@ -204,4 +220,4 @@ def merge_subdiagram(
                     new_g.add_edge((t, v), ety)
                 break  # Only snap onto one edge per vertex
 
-    return new_g
+    return new_g, edge_remap

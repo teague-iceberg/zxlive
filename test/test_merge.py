@@ -74,7 +74,7 @@ class TestMergeNodeOnNode:
     def test_basic_merge_vertices_removed(self) -> None:
         """Selected vertices A, B should be removed after merging onto C, D."""
         g, a, b, c, d = _make_pair_graph()
-        result = merge_subdiagram(g, [a, b])
+        result, _ = merge_subdiagram(g, [a, b])
         verts = set(result.vertices())
         assert a not in verts
         assert b not in verts
@@ -85,7 +85,7 @@ class TestMergeNodeOnNode:
         """Target vertices should take the type of the top (selected) vertices."""
         g, a, b, c, d = _make_pair_graph()
         assert g.type(c) == VertexType.Z
-        result = merge_subdiagram(g, [a, b])
+        result, _ = merge_subdiagram(g, [a, b])
         assert result.type(c) == VertexType.X
         assert result.type(d) == VertexType.X
 
@@ -94,14 +94,14 @@ class TestMergeNodeOnNode:
         g, a, b, c, d = _make_pair_graph()
         g.set_phase(a, Fraction(1, 4))
         g.set_phase(c, Fraction(1, 2))
-        result = merge_subdiagram(g, [a, b])
+        result, _ = merge_subdiagram(g, [a, b])
         assert result.phase(c) == Fraction(1, 4)
 
     def test_overlapping_edges_dedup(self) -> None:
         """When top and bottom both have 1 simple edge at curve 0,
         result should have 1 edge (not 2)."""
         g, a, b, c, d = _make_pair_graph()
-        result = merge_subdiagram(g, [a, b])
+        result, _ = merge_subdiagram(g, [a, b])
         edges = list(result.edges(c, d))
         assert len(edges) == 1
 
@@ -117,7 +117,7 @@ class TestMergeNodeOnNode:
         b = g.add_vertex(VertexType.X, qubit=0, row=1)
         g.add_edge((a, b), EdgeType.SIMPLE)
 
-        result = merge_subdiagram(g, [a, b])
+        result, _ = merge_subdiagram(g, [a, b])
         edges = list(result.edges(c, d))
         assert len(edges) == 1
         assert result.edge_type(edges[0]) == EdgeType.SIMPLE
@@ -127,7 +127,7 @@ class TestMergeNodeOnNode:
         g, a, b, c, d = _make_pair_graph()
         # Give top edge a different curve
         e_top = next(g.edges(a, b))
-        result = merge_subdiagram(g, [a, b],
+        result, _ = merge_subdiagram(g, [a, b],
                                   edge_curves={
                                       next(g.edges(c, d)): [0.0],
                                       e_top: [0.5],
@@ -145,7 +145,7 @@ class TestMergeNodeOnNode:
         a = g.add_vertex(VertexType.X, qubit=0, row=0)
         g.add_edge((a, ext), EdgeType.SIMPLE)
 
-        result = merge_subdiagram(g, [a])
+        result, _ = merge_subdiagram(g, [a])
         assert result.connected(c, ext)
 
     def test_self_loop_avoided(self) -> None:
@@ -156,7 +156,7 @@ class TestMergeNodeOnNode:
         a = g.add_vertex(VertexType.X, qubit=0, row=0)
         g.add_edge((a, c), EdgeType.SIMPLE)
 
-        result = merge_subdiagram(g, [a])
+        result, _ = merge_subdiagram(g, [a])
         assert a not in result.vertices()
         # No self-loop on c
         for e in result.edges():
@@ -168,21 +168,21 @@ class TestMergeNodeOnNode:
         should remain in the graph."""
         g = new_graph()
         a = g.add_vertex(VertexType.X, qubit=5, row=5)
-        result = merge_subdiagram(g, [a])
+        result, _ = merge_subdiagram(g, [a])
         assert a in result.vertices()
 
     def test_empty_selection(self) -> None:
         """Empty selection should return a copy of the original graph."""
         g = new_graph()
         g.add_vertex(VertexType.Z, qubit=0, row=0)
-        result = merge_subdiagram(g, [])
+        result, _ = merge_subdiagram(g, [])
         assert set(result.vertices()) == set(g.vertices())
 
     def test_original_not_mutated(self) -> None:
         """The original graph should not be modified."""
         g, a, b, c, d = _make_pair_graph()
         orig_verts = set(g.vertices())
-        merge_subdiagram(g, [a, b])
+        _, _ = merge_subdiagram(g, [a, b])
         assert set(g.vertices()) == orig_verts
 
 
@@ -197,7 +197,7 @@ class TestMergeNodeOnEdge:
         # Place a selected vertex at midpoint of the edge
         v = g.add_vertex(VertexType.X, qubit=0, row=1)
 
-        result = merge_subdiagram(g, [v])
+        result, _ = merge_subdiagram(g, [v])
         assert v in result.vertices()
         # Original edge should be gone
         assert not result.connected(s, t)
@@ -214,7 +214,7 @@ class TestMergeNodeOnEdge:
 
         v = g.add_vertex(VertexType.X, qubit=0, row=1)
 
-        result = merge_subdiagram(g, [v])
+        result, _ = merge_subdiagram(g, [v])
         edges_sv = list(result.edges(s, v))
         edges_vt = list(result.edges(v, t))
         assert len(edges_sv) == 1
@@ -233,7 +233,7 @@ class TestMergeNodeOnEdge:
         v = g.add_vertex(VertexType.Z, qubit=0, row=1)
 
         # All three are selected — v should NOT snap onto s-t edge
-        result = merge_subdiagram(g, [s, t, v])
+        result, _ = merge_subdiagram(g, [s, t, v])
         # s-t edge should still exist
         assert result.connected(s, t)
         # v should not be connected to s or t
@@ -250,7 +250,7 @@ class TestMergeNodeOnEdge:
         # Place vertex off the edge
         v = g.add_vertex(VertexType.X, qubit=5, row=5)
 
-        result = merge_subdiagram(g, [v])
+        result, _ = merge_subdiagram(g, [v])
         assert v in result.vertices()
         assert not result.connected(s, v)
         assert not result.connected(v, t)
@@ -271,7 +271,7 @@ class TestMergeBoundaryBoundary:
         z2 = g.add_vertex(VertexType.Z, qubit=0, row=2)
         g.add_edge((b2, z2), EdgeType.SIMPLE)
 
-        result = merge_subdiagram(g, [b2, z2])
+        result, _ = merge_subdiagram(g, [b2, z2])
         # Both boundaries gone
         assert b1 not in result.vertices()
         assert b2 not in result.vertices()
@@ -289,7 +289,7 @@ class TestMergeBoundaryBoundary:
         z2 = g.add_vertex(VertexType.Z, qubit=0, row=2)
         g.add_edge((b2, z2), EdgeType.SIMPLE)
 
-        result = merge_subdiagram(g, [b2, z2])
+        result, _ = merge_subdiagram(g, [b2, z2])
         edges = list(result.edges(z1, z2))
         assert len(edges) == 1
         assert result.edge_type(edges[0]) == EdgeType.HADAMARD
@@ -305,7 +305,7 @@ class TestMergeBoundaryBoundary:
         z2 = g.add_vertex(VertexType.Z, qubit=0, row=2)
         g.add_edge((b2, z2), EdgeType.HADAMARD)
 
-        result = merge_subdiagram(g, [b2, z2])
+        result, _ = merge_subdiagram(g, [b2, z2])
         edges = list(result.edges(z1, z2))
         assert len(edges) == 1
         assert result.edge_type(edges[0]) == EdgeType.SIMPLE
@@ -316,7 +316,7 @@ class TestMergeBoundaryBoundary:
         b1 = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=0)
         b2 = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=0)
 
-        result = merge_subdiagram(g, [b2])
+        result, _ = merge_subdiagram(g, [b2])
         assert b1 in result.vertices()
         assert b2 not in result.vertices()
 
@@ -331,7 +331,7 @@ class TestMergeBoundaryBoundary:
         g.add_edge((z1, b_top), EdgeType.SIMPLE)
         g.add_edge((b_top, z2), EdgeType.SIMPLE)
 
-        result = merge_subdiagram(g, [b_top, z1, z2])
+        result, _ = merge_subdiagram(g, [b_top, z1, z2])
         # b_bottom survives as a degree-2 node (not eliminated)
         assert b_bottom in result.vertices()
         assert result.connected(z1, b_bottom) or result.connected(b_bottom, z2)
@@ -349,7 +349,7 @@ class TestMergeBoundaryBoundary:
         z2 = g.add_vertex(VertexType.Z, qubit=0, row=2)
         g.add_edge((z_top, z2), EdgeType.SIMPLE)
 
-        result = merge_subdiagram(g, [z_top, z2])
+        result, _ = merge_subdiagram(g, [z_top, z2])
         # b1 should still exist (now typed Z from merge), not eliminated
         assert b1 in result.vertices()
 
@@ -367,7 +367,7 @@ class TestMergeMixed:
         a = g.add_vertex(VertexType.X, qubit=0, row=0)
         b = g.add_vertex(VertexType.X, qubit=0, row=1)
 
-        result = merge_subdiagram(g, [a, b])
+        result, _ = merge_subdiagram(g, [a, b])
         # a merged into c
         assert a not in result.vertices()
         assert result.type(c) == VertexType.X
@@ -402,7 +402,7 @@ class TestMergeScene:
             for e, eitems in scene.edge_map.items()
         }
 
-        new_g = merge_subdiagram(g, [a, b], edge_curves)
+        new_g, _ = merge_subdiagram(g, [a, b], edge_curves)
         scene.update_graph(new_g)
 
         assert a not in scene.vertex_map
@@ -429,7 +429,7 @@ class TestMergeScene:
             for e, eitems in scene.edge_map.items()
         }
 
-        new_g = merge_subdiagram(g, [a, b], edge_curves)
+        new_g, _ = merge_subdiagram(g, [a, b], edge_curves)
         scene.update_graph(new_g)
 
         # Should be exactly 1 edge between c and d

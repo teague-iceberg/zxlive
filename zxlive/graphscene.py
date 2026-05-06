@@ -66,6 +66,11 @@ class GraphScene(QGraphicsScene):
         # cascades in VItem.itemChange so that refreshes can be deduplicated.
         self._bulk_updating: bool = False
 
+        from .subgraph import SubgraphManager
+        from .subgraph_item import SubgraphBoxItem
+        self.subgraph_manager = SubgraphManager()
+        self.subgraph_boxes: dict[str, SubgraphBoxItem] = {}
+
     def update_background_brush(self) -> None:
         if display_setting.dark_mode:
             self.setBackgroundBrush(QBrush(QColor(30, 30, 30)))
@@ -305,6 +310,41 @@ class GraphScene(QGraphicsScene):
         for e in self.g.edges():
             s, t = self.g.edge_st(e)
             self.update_edge_curves(s, t)
+
+    def add_subgraph_box(self, sg_id: str) -> None:
+        """Create a visual bounding box for a subgraph."""
+        from .subgraph_item import SubgraphBoxItem
+        sg = self.subgraph_manager.get(sg_id)
+        if sg is None:
+            return
+        positions = {v: self.vertex_map[v].pos()
+                     for v in sg.vertices if v in self.vertex_map}
+        box = SubgraphBoxItem(sg, positions)
+        self.addItem(box)
+        self.subgraph_boxes[sg_id] = box
+
+    def remove_subgraph_box(self, sg_id: str) -> None:
+        """Remove the visual bounding box for a subgraph."""
+        box = self.subgraph_boxes.pop(sg_id, None)
+        if box is not None:
+            self.removeItem(box)
+
+    def refresh_subgraph_boxes(self) -> None:
+        """Update all subgraph bounding boxes (e.g. after vertices move)."""
+        for sg_id, box in self.subgraph_boxes.items():
+            sg = self.subgraph_manager.get(sg_id)
+            if sg is None:
+                continue
+            positions = {v: self.vertex_map[v].pos()
+                         for v in sg.vertices if v in self.vertex_map}
+            box.refresh(positions)
+
+    @property
+    def selected_subgraphs(self) -> list:
+        """Return Subgraph objects whose boxes are currently selected."""
+        from .subgraph_item import SubgraphBoxItem
+        return [item.subgraph for item in self.selectedItems()
+                if isinstance(item, SubgraphBoxItem)]
 
     def select_all(self) -> None:
         """Selects all vertices and edges in the scene."""

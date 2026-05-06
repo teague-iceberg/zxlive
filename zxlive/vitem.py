@@ -674,6 +674,13 @@ class PhaseItem(QGraphicsTextItem):
             self._boundary_label = ""
             if vertex_type == VertexType.Z_BOX:
                 self.setPlainText(str(get_z_box_label(self.v_item.g, self.v_item.v)))
+            elif vertex_type == VertexType.H_BOX:
+                from pyzx.utils import is_standard_hbox
+                if is_standard_hbox(self.v_item.g, self.v_item.v):
+                    self.setPlainText("")
+                else:
+                    from pyzx.utils import get_h_box_label
+                    self.setPlainText(str(get_h_box_label(self.v_item.g, self.v_item.v)))
             else:
                 phase = self.v_item.g.phase(self.v_item.v)
                 self.setPlainText(phase_to_s(phase, vertex_type))
